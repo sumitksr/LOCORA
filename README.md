@@ -497,12 +497,6 @@ const ALLOWED_ORIGINS = [
 
 ---
 
-## 📄 License
-
-ISC © [Sumit Kumar](https://github.com/sumitksr) — Locora
-
----
-
 <div align="center">
   <p>Built with ❤️ for communities everywhere</p>
   <p>
