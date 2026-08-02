@@ -321,13 +321,24 @@ The `client/vercel.json` already includes a rewrite rule to support client-side 
 
 ## 🚫 Non-Goals (v1)
 
-- No AI/ML — all matching and ranking is distance, time, and rule-based.
-- No Redis — activity status is a simple enum field toggled by the organiser.
-- No payments in v1.
-- No image-similarity search for Lost & Found — browse + category filters only.
+- **No AI/ML** — matching and proximity is purely distance + time + rule-based
+- **No Redis** — activity status is a simple enum field toggled by the organiser
+- **No payments** — service sharing is coordinated manually between neighbours
+- **No image-similarity search** for Lost & Found — category + text filters only
 
 ---
 
 ## 📄 License
 
-ISC © Locora Contributors
+ISC © [Sumit Kumar](https://github.com/sumitksr) — Locora
+
+---
+
+<div align="center">
+  <p>Built with ❤️ for communities everywhere</p>
+  <p>
+    <a href="https://locora.sumitksr.xyz">🌐 Live App</a> ·
+    <a href="https://github.com/sumitksr">👨‍💻 GitHub</a> ·
+    <a href="https://locora-h2f0.onrender.com/health">🏥 API Health</a>
+  </p>
+</div>
