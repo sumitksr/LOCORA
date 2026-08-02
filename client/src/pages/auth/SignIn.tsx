@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link, useLocation, Navigate } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -7,10 +7,6 @@ import toast from 'react-hot-toast';
 import { Mail, Lock, Loader2, MapPin, ArrowRight, Users, Shield, Eye, EyeOff } from 'lucide-react';
 import { authApi } from '../../api/auth';
 import { useAuth } from '../../context/AuthContext';
-
-// Read the isLoggedIn cookie — set by JS on the frontend domain after login
-const getLoggedInCookie = () =>
-  document.cookie.split('; ').some(c => c.startsWith('isLoggedIn=true'));
 
 const schema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -23,16 +19,18 @@ export const SignIn: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { login } = useAuth();
-
-  // If already logged in, skip this page entirely
-  if (getLoggedInCookie()) {
-    return <Navigate to="/app/activity" replace />;
-  }
+  const { login, isAuthenticated } = useAuth();
 
   const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
   });
+
+  // Redirect already-authenticated users — hooks are all declared above, so this is safe
+  if (isAuthenticated) {
+    const from = (location.state as any)?.from?.pathname || '/app/activity';
+    navigate(from, { replace: true });
+    return null;
+  }
 
   const onSubmit = async (data: FormValues) => {
     setLoading(true);

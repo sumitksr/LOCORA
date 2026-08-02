@@ -1,11 +1,15 @@
 import React, { useEffect } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { CalendarDays, Search, Wrench, ArrowRight, MapPin, Users, Shield, LayoutDashboard } from 'lucide-react';
+import {
+  CalendarDays, Search, Wrench, ArrowRight,
+  MapPin, Users, Shield, LayoutDashboard,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-// Read the accessToken cookie — set by server on login, readable by JS
-const hasActiveSession = () =>
-  document.cookie.split('; ').some(c => c.startsWith('isLoggedIn=true'));
+// Check the isLoggedIn cookie synchronously — set by JS on successful login.
+// This lets us redirect instantly without waiting for the auth context to load.
+const isLoggedIn = () =>
+  document.cookie.split('; ').some(c => c.startsWith('isLoggedIn='));
 
 const features = [
   {
@@ -29,16 +33,22 @@ export const Landing: React.FC = () => {
   const { isAuthenticated } = useAuth();
 
   useEffect(() => {
-    // Wake up the backend on Render so that the server is ready by the time the user reaches the sign in page
-    fetch(`${import.meta.env.VITE_API_URL}/health`).catch(() => {});
+    // Wake up the backend on Render's free tier before the user hits sign-in
+    if (import.meta.env.VITE_API_URL) {
+      fetch(`${import.meta.env.VITE_API_URL}/health`).catch(() => {});
+    }
   }, []);
 
-  // Redirect to app immediately if:
-  // - already authenticated in React state, OR
-  // - the isLoggedIn cookie exists (we have an active session, Layout will handle the loading spinner)
-  if (isAuthenticated || hasActiveSession()) {
+  // If the user is logged in (either fully authenticated in React state OR the
+  // isLoggedIn cookie is present), send them straight to the app. The Layout
+  // component handles the loading spinner while checkAuth completes.
+  if (isAuthenticated || isLoggedIn()) {
     return <Navigate to="/app/activity" replace />;
   }
+
+  // Compute once — isAuthenticated is false here, but keep the variable for
+  // any dynamic references below.
+  const userIsLoggedIn = false;
 
   return (
     <div className="landing-shell">
@@ -56,7 +66,7 @@ export const Landing: React.FC = () => {
             </span>
           </Link>
           <Link
-            to={isAuthenticated ? '/app/activity' : '/signin'}
+            to={userIsLoggedIn ? '/app/activity' : '/signin'}
             style={{
               background: 'rgba(255,255,255,0.15)',
               border: '1.5px solid rgba(255,255,255,0.35)',
@@ -73,7 +83,7 @@ export const Landing: React.FC = () => {
             onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.25)')}
             onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.15)')}
           >
-            {isAuthenticated ? <><LayoutDashboard size={15} /> Dashboard</> : 'Sign In'}
+            {userIsLoggedIn ? <><LayoutDashboard size={15} /> Home</> : 'Sign In'}
           </Link>
         </div>
 
@@ -93,9 +103,9 @@ export const Landing: React.FC = () => {
               Locora brings neighbors together. Find local events, recover lost items, and share service visits — all within your street.
             </p>
             <div className="landing-cta-row">
-              <Link to={isAuthenticated ? '/app/activity' : '/signin'} className="landing-cta-primary">
-                {isAuthenticated ? 'Go to Dashboard' : 'Get Started'}
-                {isAuthenticated ? <LayoutDashboard size={17} /> : <ArrowRight size={17} />}
+              <Link to="/signin" className="landing-cta-primary">
+                Get Started
+                <ArrowRight size={17} />
               </Link>
               <a href="#features" className="landing-cta-secondary">
                 See Features
@@ -159,9 +169,9 @@ export const Landing: React.FC = () => {
           <p style={{ color: 'var(--text-muted)', fontSize: 15, marginBottom: 28 }}>
             Join Locora in seconds — no password required, just your email address.
           </p>
-          <Link to={isAuthenticated ? '/app/activity' : '/signin'} className="btn btn-primary btn-lg">
-            {isAuthenticated ? 'Open Dashboard' : "Join Now — It's Free"}
-            {isAuthenticated ? <LayoutDashboard size={17} /> : <ArrowRight size={17} />}
+          <Link to="/signin" className="btn btn-primary btn-lg">
+            Join Now — It's Free
+            <ArrowRight size={17} />
           </Link>
         </div>
       </section>
@@ -175,8 +185,8 @@ export const Landing: React.FC = () => {
           <strong style={{ color: 'var(--text-h)', fontWeight: 800, letterSpacing: '-0.03em' }}>locora</strong>
         </div>
         <p>© {new Date().getFullYear()} Locora · The Social Layer of Every Neighborhood</p>
-        <Link to={isAuthenticated ? '/app/activity' : '/signin'} style={{ color: 'var(--accent-dark)', fontWeight: 600 }}>
-          {isAuthenticated ? 'Dashboard →' : 'Sign In →'}
+        <Link to="/signin" style={{ color: 'var(--accent-dark)', fontWeight: 600 }}>
+          Sign In →
         </Link>
       </footer>
 

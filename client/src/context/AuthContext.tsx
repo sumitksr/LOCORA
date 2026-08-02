@@ -18,47 +18,53 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // ── Cookie helpers ────────────────────────────────────────────────────────────
 
-const COOKIE_ACCESS_MAX_AGE = 24 * 60 * 60;       // 1 day (matches server)
+const COOKIE_ACCESS_MAX_AGE  = 24  * 60 * 60; // 1 day
 const COOKIE_SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 
-const getCookieValue = (name: string): string | null => {
-  const match = document.cookie
-    .split('; ')
-    .find(c => c.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.split('=').slice(1).join('=')) : null;
-};
-
-const setCookie = (name: string, value: string, maxAge: number) => {
+/** Write a JS-readable cookie (not HttpOnly). */
+const setCookieClient = (name: string, value: string, maxAge: number) => {
   const secure = location.protocol === 'https:' ? '; Secure' : '';
-  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
+  document.cookie =
+    `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
 };
 
-const clearCookie = (name: string) => {
+/** Wipe a client-side cookie. */
+const clearCookieClient = (name: string) => {
   document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
 };
 
-/** Read the access token JWT from cookie and check it hasn't expired yet.
- *  Does NOT verify the signature (that's the server's job) — just checks exp. */
-const getValidAccessTokenFromCookie = (): string | null => {
+/** Get a cookie value by name. */
+const getCookieValue = (name: string): string | null => {
+  const match = document.cookie
+    .split('; ')
+    .find(row => row.startsWith(`${name}=`));
+  if (!match) return null;
+  return decodeURIComponent(match.split('=').slice(1).join('='));
+};
+
+/** Return the raw access token only if it has NOT yet expired.
+ *  We decode the payload without verifying the signature — the server still
+ *  validates; we just avoid firing a network call for a clearly dead token. */
+const getValidAccessToken = (): string | null => {
   const token = getCookieValue('accessToken');
   if (!token) return null;
   try {
-    const [, payloadB64] = token.split('.');
-    const payload = JSON.parse(atob(payloadB64));
-    // Give a 30-second buffer before expiry so we refresh slightly early
-    if (payload.exp && payload.exp * 1000 > Date.now() + 30_000) {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    // 60-second grace window so we don't use a token that expires mid-request
+    if (payload.exp && payload.exp * 1000 > Date.now() + 60_000) {
       return token;
     }
   } catch {
-    // malformed token — treat as missing
+    // malformed — discard
   }
   return null;
 };
 
+/** True when the isLoggedIn sentinel cookie exists (any value). */
 const hasSessionCookie = () =>
-  document.cookie.split('; ').some(c => c.startsWith('isLoggedIn=true'));
+  document.cookie.split('; ').some(c => c.startsWith('isLoggedIn='));
 
-const buildRefreshBase = () =>
+const buildBase = () =>
   import.meta.env.VITE_API_URL
     ? `${import.meta.env.VITE_API_URL}/api`
     : '/api';
@@ -68,98 +74,87 @@ const buildRefreshBase = () =>
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessTokenState] = useState<string | null>(null);
-  // Start loading only if a session cookie is present — avoids flicker for guests
-  const [isLoading, setIsLoading] = useState(() => hasSessionCookie());
+  const [isLoading, setIsLoading] = useState<boolean>(hasSessionCookie);
   const hasChecked = useRef(false);
 
+  // ── login: called after a successful sign-in / sign-up / refresh ────────────
   const login = (userData: User, token: string) => {
     setUser(userData);
     setAccessTokenState(token);
     setAccessToken(token);
-    // Persist both access token and session flag in JS-readable cookies
-    setCookie('accessToken', token, COOKIE_ACCESS_MAX_AGE);
-    setCookie('isLoggedIn', 'true', COOKIE_SESSION_MAX_AGE);
+    // Write both cookies from the client side so they survive a page refresh
+    // even if the server's Set-Cookie header was dropped by the Vite proxy.
+    setCookieClient('accessToken', token, COOKIE_ACCESS_MAX_AGE);
+    setCookieClient('isLoggedIn', 'true', COOKIE_SESSION_MAX_AGE);
   };
 
+  // ── clearAuth: wipe everything ──────────────────────────────────────────────
   const clearAuth = () => {
     setUser(null);
     setAccessTokenState(null);
     setAccessToken(null);
-    clearCookie('accessToken');
-    clearCookie('isLoggedIn');
+    clearCookieClient('accessToken');
+    clearCookieClient('isLoggedIn');
   };
 
+  // ── logout: tell server then wipe locally ───────────────────────────────────
   const logout = async () => {
-    try {
-      await authApi.logout();
-    } catch (e) {
+    try { await authApi.logout(); } catch (e) {
       console.error('Logout request failed', e);
     } finally {
       clearAuth();
     }
   };
 
-  /** Restore session from cookies.
-   *  Strategy:
-   *  1. If the accessToken cookie holds a still-valid JWT → restore immediately,
-   *     then fire a background refresh to get a fresh token + user data.
-   *  2. If the accessToken cookie is missing or expired but isLoggedIn exists →
-   *     hit /auth/refresh to exchange the HttpOnly refreshToken for a new pair.
-   *  3. If everything is missing or the refresh fails → clear state (guest). */
+  // ── checkAuth: called once on mount when a prior session might exist ────────
   const checkAuth = async () => {
-    // Fast path: we already have a valid access token in cookie
-    const cachedToken = getValidAccessTokenFromCookie();
-    if (cachedToken) {
-      // Restore the token into memory immediately so the app renders without waiting
-      setAccessToken(cachedToken);
-      setAccessTokenState(cachedToken);
+    // ── FAST PATH ─────────────────────────────────────────────────────────────
+    // If a valid accessToken cookie exists, restore auth state from it
+    // immediately without any network call. Then fetch the user profile in the
+    // background to get up-to-date user data.
+    const savedToken = getValidAccessToken();
 
-      // Then fetch the user profile with this token (avoids stale user data)
+    if (savedToken) {
+      // Restore token in memory right away so API calls work before /me returns
+      setAccessToken(savedToken);
+      setAccessTokenState(savedToken);
+
+      // Fetch user profile with the restored token
       try {
-        const { data } = await axios.get(`${buildRefreshBase()}/auth/me`, {
-          headers: { Authorization: `Bearer ${cachedToken}` },
+        const { data } = await axios.get(`${buildBase()}/auth/me`, {
+          headers: { Authorization: `Bearer ${savedToken}` },
           withCredentials: true,
         });
         if (data?.success && data?.data) {
           setUser(data.data);
-        } else {
-          // Token rejected by server — do a full refresh
-          await doSilentRefresh();
-          return;
+          // Refresh the accessToken cookie TTL
+          setCookieClient('accessToken', savedToken, COOKIE_ACCESS_MAX_AGE);
+          setCookieClient('isLoggedIn', 'true', COOKIE_SESSION_MAX_AGE);
+          setIsLoading(false);
+          return; // ✅ done — skip the slow path
         }
       } catch {
-        // /me failed — maybe token expired server-side, try a refresh
-        await doSilentRefresh();
-        return;
-      } finally {
-        setIsLoading(false);
+        // /me returned 401 (token expired server-side) — fall through to slow path
+        // but DON'T clear auth yet; the refresh might save us
       }
-      return;
     }
 
-    // Slow path: accessToken cookie missing/expired, try the HttpOnly refreshToken
-    await doSilentRefresh();
-  };
-
-  const doSilentRefresh = async () => {
+    // ── SLOW PATH ─────────────────────────────────────────────────────────────
+    // No valid accessToken cookie, or /me rejected it.
+    // Try to exchange the HttpOnly refreshToken cookie for a fresh pair.
     try {
-      // Raw axios (no interceptors) so a 401 here doesn't fire the logout
-      // callback and wipe state before we've finished initialising.
       const { data } = await axios.post(
-        `${buildRefreshBase()}/auth/refresh`,
+        `${buildBase()}/auth/refresh`,
         {},
         { withCredentials: true },
       );
       if (data?.success && data?.data) {
-        // Server sets refreshToken + accessToken + isLoggedIn cookies via Set-Cookie.
-        // We also call login() to update React state AND write the accessToken cookie
-        // from JS so future page loads can skip this round-trip.
         login(data.data.user, data.data.accessToken);
       } else {
         clearAuth();
       }
     } catch {
-      // No valid session — normal on first visit or after token expiry.
+      // Refresh token missing / expired → user needs to sign in again
       clearAuth();
     } finally {
       setIsLoading(false);
@@ -169,14 +164,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     setLogoutCallback(clearAuth);
 
-    // Only attempt restoration if there's evidence of a prior session
-    if (!hasChecked.current && hasSessionCookie()) {
+    if (!hasChecked.current) {
       hasChecked.current = true;
-      checkAuth();
-    } else if (!hasSessionCookie()) {
-      // No session cookie — we can stop loading immediately
-      setIsLoading(false);
+      if (hasSessionCookie()) {
+        checkAuth();
+      } else {
+        // No session evidence at all — stop loading immediately
+        setIsLoading(false);
+      }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -198,8 +195,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };
