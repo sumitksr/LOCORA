@@ -3,8 +3,8 @@ import { Link, Navigate } from 'react-router-dom';
 import { CalendarDays, Search, Wrench, ArrowRight, MapPin, Users, Shield, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
-// Read the isLoggedIn cookie — set by JS on the frontend domain after login
-const getLoggedInCookie = () =>
+// Read the accessToken cookie — set by server on login, readable by JS
+const hasActiveSession = () =>
   document.cookie.split('; ').some(c => c.startsWith('isLoggedIn=true'));
 
 const features = [
@@ -28,16 +28,17 @@ const features = [
 export const Landing: React.FC = () => {
   const { isAuthenticated } = useAuth();
 
-  // If cookie says logged-in, send them straight to the app immediately
-  // (synchronous — no waiting for the async checkAuth to complete)
-  if (getLoggedInCookie()) {
-    return <Navigate to="/app/activity" replace />;
-  }
-
   useEffect(() => {
     // Wake up the backend on Render so that the server is ready by the time the user reaches the sign in page
     fetch(`${import.meta.env.VITE_API_URL}/health`).catch(() => {});
   }, []);
+
+  // Redirect to app immediately if:
+  // - already authenticated in React state, OR
+  // - the isLoggedIn cookie exists (we have an active session, Layout will handle the loading spinner)
+  if (isAuthenticated || hasActiveSession()) {
+    return <Navigate to="/app/activity" replace />;
+  }
 
   return (
     <div className="landing-shell">

@@ -4,6 +4,7 @@ import { env } from '../config/env';
 const isProd = env.NODE_ENV === 'production';
 
 const ACCESS_TOKEN_EXPIRY = '1d';
+const ACCESS_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 1 day in ms
 const REFRESH_TOKEN_EXPIRY = '30d';
 const REFRESH_TOKEN_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -43,6 +44,19 @@ export const REFRESH_COOKIE_OPTIONS = {
   secure: isProd,
   sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
   maxAge: REFRESH_TOKEN_EXPIRY_MS,
+  path: '/',
+};
+
+/** Cookie options for the access token cookie.
+ *  NOT httpOnly — client JS must be able to read it to restore auth state
+ *  on page refresh without a network round-trip.
+ *  Expires in sync with the access token itself (1 day). */
+export const ACCESS_COOKIE_OPTIONS = {
+  httpOnly: false,                                     // JS-readable
+  secure: isProd,
+  sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
+  maxAge: ACCESS_TOKEN_EXPIRY_MS,
+  path: '/',
 };
 
 /** Cookie options for the readable `isLoggedIn=true` flag cookie.
@@ -54,4 +68,5 @@ export const IS_LOGGED_IN_COOKIE_OPTIONS = {
   secure: isProd,
   sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
   maxAge: REFRESH_TOKEN_EXPIRY_MS,
+  path: '/',
 };

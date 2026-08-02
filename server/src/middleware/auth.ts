@@ -13,8 +13,14 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
   try {
     let token: string | undefined;
 
+    // Primary: Authorization header (Bearer token)
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
       token = req.headers.authorization.split(' ')[1];
+    }
+
+    // Fallback: accessToken cookie (JS-readable, set by server on login)
+    if (!token && req.cookies?.accessToken) {
+      token = req.cookies.accessToken;
     }
 
     if (!token) {

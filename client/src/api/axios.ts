@@ -1,6 +1,32 @@
 import axios from 'axios';
 
-let accessToken: string | null = null;
+// ── In-memory token store ─────────────────────────────────────────────────────
+
+/** Read the raw access token from cookie (JS-readable, NOT HttpOnly). */
+const getTokenFromCookie = (): string | null => {
+  const match = document.cookie
+    .split('; ')
+    .find(c => c.startsWith('accessToken='));
+  return match ? decodeURIComponent(match.split('=').slice(1).join('=')) : null;
+};
+
+/** Quick exp-check without signature verification (server still validates). */
+const isTokenExpired = (token: string): boolean => {
+  try {
+    const [, b64] = token.split('.');
+    const { exp } = JSON.parse(atob(b64));
+    return !exp || exp * 1000 <= Date.now() + 30_000;
+  } catch {
+    return true;
+  }
+};
+
+// Pre-populate from cookie so the very first API request after a page refresh
+// already carries the Authorization header — no round-trip needed.
+const cookieToken = getTokenFromCookie();
+let accessToken: string | null =
+  cookieToken && !isTokenExpired(cookieToken) ? cookieToken : null;
+
 let logoutCallback: (() => void) | null = null;
 
 export const setAccessToken = (token: string | null) => {
@@ -10,6 +36,8 @@ export const setAccessToken = (token: string | null) => {
 export const setLogoutCallback = (cb: () => void) => {
   logoutCallback = cb;
 };
+
+// ── Axios instance ────────────────────────────────────────────────────────────
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api',
